@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Traveler's Backpack :: Side Quest</title>
+<style>
+  @font-face {
+    font-family: 'JetBrains Mono';
+    src: local('JetBrains Mono');
+  }
+
+  :root {
+    --bg: #0a0a0c;
+    --bg-raised: #121215;
+    --fg: #e8e6e1;
+    --fg-dim: #6b6f76;
+    --green: #3ddc84;
+    --amber: #ffb347;
+    --blue: #5eb3ff;
+    --border: #232327;
+    --radius: 3px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  #app {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    max-width: 480px;
+    margin: 0 auto;
+    position: relative;
+  }
+
+  /* ---------- CRT / scanline texture ---------- */
+  .scanlines {
+    pointer-events: none;
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(255,255,255,0.015) 0px,
+      rgba(255,255,255,0.015) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+    mix-blend-mode: overlay;
+  }
+  .vignette {
+    pointer-events: none;
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.55) 100%);
+  }
+
+  /* ---------- Top chrome / status bar ---------- */
+  .chrome {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--fg-dim);
+    flex-shrink: 0;
+  }
+  .chrome-lights { display: flex; gap: 10px; align-items: center; }
+  .light { display: flex; align-items: center; gap: 5px; }
+  .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    box-shadow: 0 0 6px currentColor;
+  }
+  .dot.pwr { background: var(--green); color: var(--green); }
+  .dot.sig { background: var(--amber); color: var(--amber); animation: blink 2.4s infinite; }
+  .dot.loc { background: var(--blue); color: var(--blue); }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  .chrome-id { text-align: right; }
+  .chrome-id .item-name { color: var(--fg); font-size: 11px; letter-spacing: 0.06em; }
+  .chrome-id .item-rarity { color: var(--amber); font-size: 9px; letter-spacing: 0.08em; margin-top: 1px; }
+
+  /* ---------- Quest tracker (signature element) ---------- */
+  .quest-tracker {
+    padding: 10px 18px 12px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .quest-tracker-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    color: var(--fg);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+  }
+  .quest-tracker-row .objective { flex: 1; }
+  .quest-tracker-row .step { color: var(--fg-dim); flex-shrink: 0; }
+  .quest-track {
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .quest-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+    transition: width 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* ---------- Main stage area ---------- */
+  .stage {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 32px 22px;
+    position: relative;
+  }
+
+  .screen {
+    display: none;
+    flex-direction: column;
+    gap: 18px;
+    animation: fadeIn 0.5s ease;
+  }
+  .screen.active { display: flex; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ---------- Terminal text conventions ---------- */
+  .line { font-size: 13px; line-height: 1.7; }
+  .line .prompt { color: var(--green); margin-right: 8px; }
+  .cursor {
+    display: inline-block;
+    width: 8px; height: 15px;
+    background: var(--fg);
+    vertical-align: middle;
+    animation: cursorBlink 1s step-end infinite;
+  }
+  @keyframes cursorBlink { 0%,50% { opacity: 1; } 51%,100% { opacity: 0; } }
+
+  .skip {
+    position: absolute;
+    bottom: 18px;
+    right: 22px;
+    font-size: 10px;
+    color: var(--fg-dim);
+    letter-spacing: 0.08em;
+    background: none;
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    border-radius: var(--radius);
+    cursor: pointer;
+  }
+  .skip:active { background: var(--bg-raised); }
+
+  /* ---------- Quest accept card ---------- */
+  .quest-card {
+    border: 1px solid var(--border);
+    background: var(--bg-raised);
+    border-radius: var(--radius);
+    padding: 22px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .quest-card-eyebrow {
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    color: var(--amber);
+    text-transform: uppercase;
+  }
+  .quest-card-title {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--fg);
+  }
+  .quest-card-desc {
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--fg-dim);
+  }
+  .quest-card-objective {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 10px 12px;
+    border-left: 2px solid var(--amber);
+    background: rgba(255, 179, 71, 0.06);
+  }
+  .objective-label {
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    color: var(--amber);
+  }
+  .objective-value {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .quest-card-reward {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 10px 12px;
+    border-left: 2px solid var(--green);
+    background: rgba(61, 220, 132, 0.06);
+  }
+  .reward-label {
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    color: var(--green);
+  }
+  .reward-value {
+    font-size: 12px;
+    color: var(--fg);
+  }
+  .btn-accept {
+    margin-top: 6px;
+    font-size: 13px;
+    padding: 15px 20px;
+    box-shadow: 0 0 18px rgba(61, 220, 132, 0.25);
+  }
+  .btn-accept:active { transform: scale(0.98); }
+  .btn-ghost {
+    font-family: inherit;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: var(--fg-dim);
+    background: none;
+    border: none;
+    padding: 4px;
+    cursor: pointer;
+    text-align: center;
+  }
+
+  /* ---------- Reveal fragments (dossier) ---------- */
+  .dossier {
+    border: 1px solid var(--border);
+    background: var(--bg-raised);
+    border-radius: var(--radius);
+    padding: 22px 20px;
+    min-height: 150px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .dossier-label {
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--blue);
+    text-transform: uppercase;
+  }
+  .dossier-lines {
+    font-size: 13px;
+    line-height: 1.9;
+    color: var(--fg);
+  }
+  .dossier-lines .field-tag {
+    color: var(--fg-dim);
+    margin-right: 6px;
+  }
+  .dossier-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 2px 0;
+  }
+  .btn-return {
+    margin-top: 20px;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 0.5s ease, transform 0.5s ease;
+    box-shadow: 0 0 18px rgba(61, 220, 132, 0.25);
+  }
+  .btn-return.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* ---------- Contact screen ---------- */
+  .contact-btn {
+    display: block;
+    text-decoration: none;
+    text-align: center;
+    box-sizing: border-box;
+  }
+  .contact-call {
+    background: var(--blue);
+    color: var(--bg);
+  }
+  .contact-whatsapp {
+    background: var(--green);
+    color: var(--bg);
+  }
+  .quest-complete {
+    margin-top: 8px;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--fg-dim);
+    text-align: center;
+  }
+
+  /* placeholder button style, reused/refined later */
+  .btn {
+    font-family: inherit;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    color: var(--bg);
+    background: var(--green);
+    border: none;
+    padding: 14px 20px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div class="chrome">
+    <div class="chrome-lights">
+      <div class="light"><span class="dot pwr"></span>COND</div>
+      <div class="light"><span class="dot sig"></span>SIG</div>
+      <div class="light"><span class="dot loc"></span>LOC</div>
+    </div>
+    <div class="chrome-id">
+      <div class="item-name">TRAVELER'S BACKPACK</div>
+      <div class="item-rarity">RARE · QUEST ITEM</div>
+    </div>
+  </div>
+
+  <div class="quest-tracker">
+    <div class="quest-tracker-row">
+      <span class="objective" id="questObjective">DETECTING ITEM...</span>
+      <span class="step" id="questStep">0/5</span>
+    </div>
+    <div class="quest-track">
+      <div class="quest-fill" id="questFill"></div>
+    </div>
+  </div>
+
+  <div class="stage">
+
+    <!-- SCREEN 0: BOOT SEQUENCE -->
+    <section class="screen active" id="screen-boot">
+      <div class="line" id="bootLines"></div>
+    </section>
+
+    <!-- SCREEN 1: QUEST ACCEPT -->
+    <section class="screen" id="screen-accept">
+      <div class="quest-card">
+        <div class="quest-card-eyebrow">SIDE QUEST</div>
+        <h1 class="quest-card-title">Lost Cargo</h1>
+        <div class="quest-card-objective">
+          <span class="objective-label">OBJECTIVE</span>
+          <span class="objective-value">Return Backpack to Mehraan</span>
+        </div>
+        <p class="quest-card-desc">
+          A backpack sits far from where it belongs. Its owner doesn't know
+          you exist yet &mdash; but you're the only one who can close this quest.
+        </p>
+        <div class="quest-card-reward">
+          <span class="reward-label">REWARD</span>
+          <span class="reward-value">The gratitude of a stranger, restored</span>
+        </div>
+        <button class="btn btn-accept" id="acceptBtn">Accept Quest</button>
+        <button class="btn-ghost" id="declineBtn">Not now</button>
+      </div>
+    </section>
+
+    <!-- SCREEN 2: REVEAL (combined dossier) -->
+    <section class="screen" id="screen-reveal">
+      <div class="dossier">
+        <div class="dossier-section">
+          <div class="dossier-label">OWNER FILE</div>
+          <div class="dossier-lines" id="section-owner"></div>
+        </div>
+        <div class="dossier-divider"></div>
+        <div class="dossier-section">
+          <div class="dossier-label">CARGO MANIFEST</div>
+          <div class="dossier-lines" id="section-cargo"></div>
+        </div>
+        <div class="dossier-divider"></div>
+        <div class="dossier-section">
+          <div class="dossier-label">FIELD NOTE</div>
+          <div class="dossier-lines" id="section-field"></div>
+        </div>
+      </div>
+      <button class="btn btn-return" id="returnBtn">Return the Backpack</button>
+    </section>
+
+    <!-- SCREEN 3: CONTACT -->
+    <section class="screen" id="screen-contact">
+      <div class="quest-card">
+        <div class="quest-card-eyebrow">FINAL OBJECTIVE</div>
+        <h1 class="quest-card-title">Reunion</h1>
+        <p class="quest-card-desc">
+          The backpack knows the way home. It just needs you to make the call.
+        </p>
+        <a class="btn contact-btn contact-call" href="tel:+917051248765">Call Mehraan</a>
+        <a class="btn contact-btn contact-whatsapp" href="https://wa.me/917051248765">Message on WhatsApp</a>
+        <div class="quest-complete">QUEST COMPLETE &mdash; ITEM RETURNED TO INVENTORY.</div>
+      </div>
+    </section>
+
+    <button class="skip" id="skipBtn">SKIP &gt;&gt;</button>
+  </div>
+</div>
+
+<div class="vignette"></div>
+<div class="scanlines"></div>
+
+<script>
+  // ---------- Quest progression config ----------
+  const STAGES = ['boot', 'accept', 'reveal', 'contact'];
+  const QUEST_STATE = {
+    boot:    { pct: 0,   objective: 'DETECTING ITEM...',              step: '0/4' },
+    accept:  { pct: 25,  objective: 'OBJECTIVE: ACCEPT THE QUEST',    step: '1/4' },
+    reveal:  { pct: 65,  objective: "OBJECTIVE: LEARN THE OWNER'S STORY", step: '2/4' },
+    contact: { pct: 100, objective: 'OBJECTIVE: RETURN THE PACK',     step: '3/4' }
+  };
+
+  function setQuestState(stage) {
+    const s = QUEST_STATE[stage];
+    document.getElementById('questFill').style.width = s.pct + '%';
+    document.getElementById('questObjective').textContent = s.objective;
+    document.getElementById('questStep').textContent = s.step;
+  }
+
+  // ---------- Boot sequence typewriter ----------
+  const bootScript = [
+    { text: 'ITEM DETECTED NEARBY...', delay: 400 },
+    { text: 'INSPECTING OBJECT...', delay: 500 },
+    { text: "TRAVELER'S BACKPACK [RARE]", delay: 500 },
+    { text: 'RETURN TARGET: MEHRAAN', delay: 600 },
+    { text: 'NEW QUEST AVAILABLE_', delay: 400 }
+  ];
+
+  const bootEl = document.getElementById('bootLines');
+
+  async function typeLine(text) {
+    const row = document.createElement('div');
+    row.style.marginBottom = '4px';
+    const prompt = document.createElement('span');
+    prompt.className = 'prompt';
+    prompt.textContent = '>';
+    row.appendChild(prompt);
+    const span = document.createElement('span');
+    row.appendChild(span);
+    bootEl.appendChild(row);
+
+    for (let i = 0; i < text.length; i++) {
+      span.textContent += text[i];
+      await new Promise(r => setTimeout(r, 14));
+    }
+  }
+
+  // ---------- Reveal sequence (single combined dossier) ----------
+  const SECTIONS = [
+    {
+      containerId: 'section-owner',
+      lines: [
+        { tag: 'NAME', value: 'MEHRAAN MIR' },
+        { tag: 'PROGRAM', value: 'M.TECH DSAI' },
+        { tag: 'ENROLL', value: 'MT2025716' }
+      ]
+    },
+    {
+      containerId: 'section-cargo',
+      lines: [
+        { tag: 'ITEM', value: 'LAPTOP — MISSION CRITICAL' },
+        { tag: 'ITEM', value: 'HANDWRITTEN NOTES — UNRECOVERABLE IF LOST' },
+        { plain: 'Everything needed to keep building is in here.' }
+      ]
+    },
+    {
+      containerId: 'section-field',
+      lines: [
+        { plain: 'Currently minimizing loss — including this backpack. 😅' }
+      ]
+    }
+  ];
+
+  async function typeIntoContainer(container, text, speed) {
+    for (let i = 0; i < text.length; i++) {
+      container.textContent += text[i];
+      await new Promise(r => setTimeout(r, speed));
+    }
+  }
+
+  async function runReveal() {
+    document.getElementById('returnBtn').classList.remove('visible');
+    for (const section of SECTIONS) {
+      const container = document.getElementById(section.containerId);
+      container.innerHTML = '';
+      for (const line of section.lines) {
+        const row = document.createElement('div');
+        if (line.tag) {
+          const tagSpan = document.createElement('span');
+          tagSpan.className = 'field-tag';
+          tagSpan.textContent = line.tag + ':';
+          row.appendChild(tagSpan);
+          const valSpan = document.createElement('span');
+          row.appendChild(valSpan);
+          container.appendChild(row);
+          await typeIntoContainer(valSpan, line.value, 12);
+        } else {
+          container.appendChild(row);
+          await typeIntoContainer(row, line.plain, 12);
+        }
+        await new Promise(r => setTimeout(r, 180));
+      }
+      await new Promise(r => setTimeout(r, 250));
+    }
+    document.getElementById('returnBtn').classList.add('visible');
+  }
+
+  // ---------- Screen navigation ----------
+  let currentIndex = 0;
+
+  function goToScreen(stage) {
+    document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
+    const target = document.getElementById('screen-' + stage);
+    if (target) target.classList.add('active');
+    setQuestState(stage);
+    currentIndex = STAGES.indexOf(stage);
+  }
+
+  async function runBoot() {
+    setQuestState('boot');
+    for (const step of bootScript) {
+      await typeLine(step.text);
+      await new Promise(r => setTimeout(r, step.delay));
+    }
+    await new Promise(r => setTimeout(r, 500));
+    goToScreen('accept');
+  }
+
+  document.getElementById('skipBtn').addEventListener('click', () => {
+    goToScreen('contact');
+  });
+
+  document.getElementById('acceptBtn').addEventListener('click', () => {
+    goToScreen('reveal');
+    runReveal();
+  });
+
+  document.getElementById('returnBtn').addEventListener('click', () => {
+    goToScreen('contact');
+  });
+
+  document.getElementById('declineBtn').addEventListener('click', () => {
+    goToScreen('contact');
+  });
+
+  runBoot();
+</script>
+
+</body>
+</html>
